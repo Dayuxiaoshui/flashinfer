@@ -31,6 +31,8 @@ from typing import Optional, Tuple
 
 import torch
 
+from .utils import backend_requirement, supported_compute_capability
+
 try:
     from .api_logging import flashinfer_api
 
@@ -95,11 +97,18 @@ except ImportError:
 TILE_V = 8  # pretranspose tile size
 
 
+@supported_compute_capability([90, 100, 103, 110, 120, 121])
+def _gdn_decode_compute_capability_check(*args, **kwargs) -> bool:
+    """CuTe-backed GDN decode requires Hopper (SM90) or newer Blackwell-family GPUs."""
+    return True
+
+
 # ============================================================================
 # API: Pretranspose Decode (V-major / K-last state layout)
 # ============================================================================
 
 
+@backend_requirement({}, common_check=_gdn_decode_compute_capability_check)
 @flashinfer_api
 def gated_delta_rule_decode_pretranspose(
     q: torch.Tensor,
@@ -158,7 +167,8 @@ def gated_delta_rule_decode_pretranspose(
         initial_state_indices (Optional[torch.Tensor]):
             Per-batch indices of shape ``[B]`` (int32 or int64) mapping each batch
             entry to its slot in ``initial_state``.  Required when ``initial_state``
-            is provided.
+            is provided. Negative values denote padding slots (CUDA graph capture);
+            semantics are handled in-kernel — do not validate or reject them in Python.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]:
@@ -332,6 +342,7 @@ def gated_delta_rule_decode_pretranspose(
 # ============================================================================
 
 
+@backend_requirement({}, common_check=_gdn_decode_compute_capability_check)
 @flashinfer_api
 def gated_delta_rule_decode(
     q: torch.Tensor,
@@ -385,7 +396,7 @@ def gated_delta_rule_decode(
             - state: Updated state tensor of shape ``[B, HV, K, V]``
 
     Note:
-        - Requires SM90 (Hopper) architecture
+        - Requires SM90+ (Hopper / Blackwell family); enforced via ``@backend_requirement``.
         - State is updated in-place
         - K and V must be multiples of 4 for vectorized loads
         - State layout is k-major: [B, HV, K, V] (no transpose needed)
@@ -473,6 +484,7 @@ def gated_delta_rule_decode(
 # ============================================================================
 
 
+@backend_requirement({}, common_check=_gdn_decode_compute_capability_check)
 @flashinfer_api
 def gated_delta_rule_mtp(
     q: torch.Tensor,
@@ -534,7 +546,7 @@ def gated_delta_rule_mtp(
             - initial_state: Updated state tensor (unchanged if disable_state_update=True)
 
     Note:
-        - Requires SM90 (Hopper) architecture
+        - Requires SM90+ (Hopper / Blackwell family); enforced via ``@backend_requirement``.
         - Supports T > 1 (multiple token processing)
         - State layout is K-last: [pool_size, HV, V, K]
         - Optimized for speculative decoding verification scenarios
